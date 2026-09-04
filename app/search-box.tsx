@@ -68,7 +68,7 @@ export default function SearchBox({ placeholder = "Search a station, e.g. Kidder
         }}
       />
       {open && needle.length > 0 && (
-        <div className="absolute top-[calc(100%+6px)] right-0 left-0 z-40 overflow-hidden rounded-card border border-line bg-white text-left shadow-[0_4px_24px_rgba(16,24,40,0.09)]">
+        <div className="absolute top-[calc(100%+6px)] right-0 left-0 z-40 overflow-hidden rounded-card border border-line bg-bg text-left shadow-[0_4px_24px_rgba(16,24,40,0.09)]">
           {hits.length === 0 ? (
             <div className="p-3.5 text-sm text-ink-3">
               {entries === null ? "Loading stations…" : `No station matching “${q}”`}

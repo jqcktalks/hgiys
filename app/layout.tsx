@@ -2,8 +2,19 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Analytics } from "@vercel/analytics/next";
 import { Wrap } from "./ui";
+import ThemeToggle from "./theme-toggle";
 import { Heart } from 'lucide-react';
 import "./globals.css";
+
+const themeInitializer = `
+  try {
+    const saved = localStorage.getItem("hgiys-theme");
+    document.documentElement.dataset.theme =
+      saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
+  } catch (_) {
+    document.documentElement.dataset.theme = "system";
+  }
+`;
 
 export const metadata: Metadata = {
   title: {
@@ -16,20 +27,24 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-GB">
+    <html lang="en-GB" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitializer }} />
+      </head>
       <body>
-        <header className="sticky top-0 z-50 border-b border-line bg-white/[0.88] backdrop-blur-xl backdrop-saturate-[1.8]">
-          <Wrap className="flex h-[58px] items-center justify-between gap-5">
+        <header className="sticky top-0 z-50 border-b border-line bg-bg/[0.88] backdrop-blur-xl backdrop-saturate-[1.8]">
+          <Wrap className="flex h-[58px] items-center justify-between gap-2 sm:gap-5">
             <Link href="/" className="text-base font-bold tracking-[-0.02em]">
               HGIYS
             </Link>
-            <nav className="flex gap-5 text-sm text-ink-2">
+            <nav className="flex items-center gap-2 text-sm text-ink-2 sm:gap-5">
               <Link href="/stations" className="hover:text-ink">
                 Stations
               </Link>
               <Link href="/method" className="hover:text-ink">
                 Method
               </Link>
+              <ThemeToggle />
             </nav>
           </Wrap>
         </header>

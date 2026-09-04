@@ -129,7 +129,7 @@ function Plot({
           cx={x(i)}
           cy={y(p.punctual)}
           r="2.6"
-          fill="#fff"
+          fill="var(--color-bg)"
           stroke="var(--color-accent)"
           strokeWidth="1.6"
         />
@@ -181,7 +181,7 @@ function Plot({
                 textAnchor="middle"
                 dominantBaseline="central"
                 fontSize={tipFont}
-                fill="#fff"
+                fill="var(--color-bg)"
               >
                 {text}
               </text>

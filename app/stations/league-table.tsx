@@ -22,7 +22,7 @@ const COLUMNS: { key: SortKey; label: string; num?: boolean; hint: string; sm?: 
 const PAGE = 100;
 
 const FIELD =
-  "rounded-lg border border-line bg-white px-[11px] py-[7px] font-sans text-base text-ink outline-none focus:border-accent focus:ring-[3px] focus:ring-accent-bg sm:text-[13.5px]";
+  "rounded-lg border border-line bg-bg px-[11px] py-[7px] font-sans text-base text-ink outline-none focus:border-accent focus:ring-[3px] focus:ring-accent-bg sm:text-[13.5px]";
 
 export default function LeagueTable({ initial, total }: { initial: IndexRow[]; total: number }) {
   const [rows, setRows] = useState<IndexRow[]>(initial);
