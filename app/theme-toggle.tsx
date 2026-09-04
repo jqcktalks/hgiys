@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Monitor, Moon, Sun } from "lucide-react";
 
 type Theme = "light" | "dark" | "system";
 
-const THEMES: { value: Theme; label: string }[] = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" },
-];
+const THEMES = [
+  { value: "light", label: "Light", Icon: Sun },
+  { value: "dark", label: "Dark", Icon: Moon },
+  { value: "system", label: "System", Icon: Monitor },
+] as const;
 
 const STORAGE_KEY = "hgiys-theme";
 
@@ -42,21 +43,23 @@ export default function ThemeToggle() {
     <div
       role="group"
       aria-label="Colour theme"
-      className="flex shrink-0 rounded-lg bg-line-2 p-0.5 text-[10px] font-semibold text-ink-3 sm:text-[11px]"
+      className="flex shrink-0 rounded-[9px] border border-line bg-bg-2 p-0.5 text-ink-3"
     >
-      {THEMES.map(({ value, label }) => (
+      {THEMES.map(({ value, label, Icon }) => (
         <button
           key={value}
           type="button"
+          aria-label={`${label} theme`}
           aria-pressed={theme === value}
+          title={label}
           onClick={() => selectTheme(value)}
-          className={`cursor-pointer rounded-md border-0 px-1 py-1 leading-none transition-[color,background-color,box-shadow] sm:px-2 ${
+          className={`flex size-6 cursor-pointer items-center justify-center rounded-md border-0 transition-[color,background-color,box-shadow] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
             theme === value
-              ? "bg-bg text-ink shadow-sm"
+              ? "bg-line-2 text-ink shadow-sm"
               : "bg-transparent text-ink-3 hover:text-ink-2"
           }`}
         >
-          {label}
+          <Icon className="size-3" aria-hidden="true" />
         </button>
       ))}
     </div>
