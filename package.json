@@ -6,6 +6,7 @@
   "scripts": {
     "ingest": "tsx scripts/ingest.ts",
     "dev": "next dev",
+    "prebuild": "npm run ingest",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit"

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +7,8 @@ import { streamOds } from "./ods-stream.ts";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CACHE = path.join(ROOT, ".cache");
 const OUT = path.join(ROOT, "data");
+const PUB = path.join(ROOT, "public", "data");
+const STAMP = path.join(OUT, ".stamp.json");
 
 const ODS_URL =
   "https://dataportal.orr.gov.uk/media/krdbknzc/table-3130-time-to-3-and-cancellations-by-station-and-operator.ods";
@@ -55,16 +58,137 @@ function parsePeriod(raw: string): { key: number; label: string } | null {
   return { key: year * 100 + period, label: `${year}/${String((year + 1) % 100).padStart(2, "0")} P${String(period).padStart(2, "0")}` };
 }
 
-async function download(url: string, dest: string) {
-  if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
-    console.log(`  cached  ${path.basename(dest)} (${(fs.statSync(dest).size / 1e6).toFixed(1)} MB)`);
-    return;
+type Probe = { etag: string | null; lastModified: string | null; size: number | null };
+
+type Stamp = { sources: Record<string, Probe>; config: string };
+
+const SOURCES = [
+  { name: "ORR Table 3130", url: ODS_URL, file: "t3130.ods" },
+  { name: "ORR Table 1410", url: CSV_URL, file: "t1410.csv" },
+];
+
+async function probe(url: string): Promise<Probe | null> {
+  try {
+    const res = await fetch(url, { method: "HEAD", redirect: "follow" });
+    if (!res.ok) return null;
+    const len = Number(res.headers.get("content-length"));
+    return {
+      etag: res.headers.get("etag"),
+      lastModified: res.headers.get("last-modified"),
+      size: Number.isFinite(len) && len > 0 ? len : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function configHash(): string {
+  const tunables = { WINDOW_PERIODS, DAYS_PER_PERIOD, SHRINKAGE_K, WEIGHTS, TOC_NAMES, ODS_URL, CSV_URL };
+  return crypto.createHash("sha256").update(JSON.stringify(tunables)).digest("hex").slice(0, 16);
+}
+
+function readStamp(): Stamp | null {
+  try {
+    const s = JSON.parse(fs.readFileSync(STAMP, "utf8")) as Stamp;
+    return s && typeof s.config === "string" && s.sources ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+function artifactsValid(): boolean {
+  try {
+    const index = JSON.parse(fs.readFileSync(path.join(OUT, "index.json"), "utf8"));
+    if (!Array.isArray(index) || index.length === 0) return false;
+    JSON.parse(fs.readFileSync(path.join(OUT, "meta.json"), "utf8"));
+    if (fs.readdirSync(path.join(OUT, "stations")).filter((f) => f.endsWith(".json")).length === 0) return false;
+    return fs.existsSync(path.join(PUB, "index.json")) && fs.existsSync(path.join(PUB, "search.json"));
+  } catch {
+    return false;
+  }
+}
+
+function shortDate(lastModified: string | null): string {
+  if (!lastModified) return "unknown date";
+  const d = new Date(lastModified);
+  return Number.isNaN(d.getTime())
+    ? lastModified
+    : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function changed(before: Probe | undefined, now: Probe): boolean {
+  if (!before) return true;
+  if (before.etag && now.etag) return before.etag !== now.etag;
+  if (before.lastModified && now.lastModified) return before.lastModified !== now.lastModified;
+  return before.size !== now.size;
+}
+
+type Decision = { ingest: boolean; reason: string; probes: Map<string, Probe | null> };
+
+async function decide(): Promise<Decision> {
+  const probes = new Map<string, Probe | null>();
+  const stamp = readStamp();
+  const haveArtifacts = artifactsValid();
+
+  if (!haveArtifacts) {
+    for (const s of SOURCES) probes.set(s.url, await probe(s.url));
+    return { ingest: true, reason: stamp ? "existing data is incomplete" : "no existing data", probes };
+  }
+  if (!stamp) return { ingest: true, reason: "previous run did not complete", probes };
+  if (stamp.config !== configHash()) return { ingest: true, reason: "scoring config changed", probes };
+
+  const reasons: string[] = [];
+  let unreachable = false;
+
+  for (const s of SOURCES) {
+    const now = await probe(s.url);
+    probes.set(s.url, now);
+    if (!now) {
+      unreachable = true;
+      console.log(`  ${s.name.padEnd(16)} ! could not reach server`);
+      continue;
+    }
+    const before = stamp.sources[s.url];
+    if (changed(before, now)) {
+      reasons.push(`${s.name} updated (${shortDate(before?.lastModified ?? null)} → ${shortDate(now.lastModified)})`);
+      console.log(`  ${s.name.padEnd(16)} updated ${shortDate(now.lastModified)}`);
+    } else {
+      console.log(`  ${s.name.padEnd(16)} unchanged (${shortDate(now.lastModified)})`);
+    }
+  }
+
+  if (reasons.length) return { ingest: true, reason: reasons.join("; "), probes };
+  if (unreachable) {
+    const generated = JSON.parse(fs.readFileSync(path.join(OUT, "meta.json"), "utf8")).generated;
+    console.log(`\n  warning: could not check for updates; using existing data from ${shortDate(generated)}`);
+    return { ingest: false, reason: "sources unreachable", probes };
+  }
+  return { ingest: false, reason: "data is current", probes };
+}
+
+async function download(url: string, dest: string, head: Probe | null, force = false) {
+  const marker = `${dest}.head.json`;
+  if (!force && fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+    const size = fs.statSync(dest).size;
+    let fetchedAt: Probe | null = null;
+    try {
+      fetchedAt = JSON.parse(fs.readFileSync(marker, "utf8")) as Probe;
+    } catch {
+      fetchedAt = null;
+    }
+    if (!head || (fetchedAt && !changed(fetchedAt, head))) {
+      console.log(`  cached  ${path.basename(dest)} (${(size / 1e6).toFixed(1)} MB)`);
+      return;
+    }
+    console.log(`  stale   ${path.basename(dest)} (${fetchedAt ? "upstream changed" : "no provenance recorded"})`);
   }
   process.stdout.write(`  fetch   ${path.basename(dest)} ... `);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(dest, buf);
+  if (head) fs.writeFileSync(marker, JSON.stringify(head));
+  else fs.rmSync(marker, { force: true });
   console.log(`${(buf.length / 1e6).toFixed(1)} MB`);
 }
 
@@ -120,15 +244,45 @@ function getStation(name: string): StationAcc {
 
 async function main() {
   const started = Date.now();
-  fs.mkdirSync(CACHE, { recursive: true });
-  fs.mkdirSync(path.join(OUT, "stations"), { recursive: true });
+  const force = process.argv.includes("--force");
+  const checkOnly = process.argv.includes("--check");
 
   console.log("\nRailScore ingest\n");
-  console.log("1/5  source files");
+
+  if (checkOnly) {
+    console.log("0/5  checking sources");
+    const decision = await decide();
+    console.log(decision.ingest ? `\nstale: ${decision.reason}` : `\ncurrent: ${decision.reason}`);
+    process.exitCode = decision.ingest ? 1 : 0;
+    return;
+  }
+
+  let probes = new Map<string, Probe | null>();
+  if (force) {
+    console.log("--force: re-downloading and re-ingesting unconditionally");
+  } else {
+    console.log("0/5  checking sources");
+    const decision = await decide();
+    probes = decision.probes;
+    if (!decision.ingest) {
+      console.log(`\n${decision.reason} — skipping ingest`);
+      console.log(`checked in ${((Date.now() - started) / 1000).toFixed(1)}s\n`);
+      return;
+    }
+    console.log(`\n${decision.reason} — ingesting`);
+  }
+
+  fs.mkdirSync(CACHE, { recursive: true });
+  fs.mkdirSync(path.join(OUT, "stations"), { recursive: true });
+  fs.rmSync(STAMP, { force: true });
+
+  console.log("\n1/5  source files");
   const odsPath = path.join(CACHE, "t3130.ods");
   const csvPath = path.join(CACHE, "t1410.csv");
-  await download(ODS_URL, odsPath);
-  await download(CSV_URL, csvPath);
+  const odsHead = probes.get(ODS_URL) ?? (await probe(ODS_URL));
+  const csvHead = probes.get(CSV_URL) ?? (await probe(CSV_URL));
+  await download(ODS_URL, odsPath, odsHead, force);
+  await download(CSV_URL, csvPath, csvHead, force);
 
   console.log("\n2/5  streaming Table 3130 (279 MB content.xml)");
   let rowsA = 0;
@@ -346,11 +500,10 @@ async function main() {
   }));
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify(index));
 
-  const pub = path.join(ROOT, "public", "data");
-  fs.mkdirSync(pub, { recursive: true });
-  fs.writeFileSync(path.join(pub, "index.json"), JSON.stringify(index));
+  fs.mkdirSync(PUB, { recursive: true });
+  fs.writeFileSync(path.join(PUB, "index.json"), JSON.stringify(index));
   fs.writeFileSync(
-    path.join(pub, "search.json"),
+    path.join(PUB, "search.json"),
     JSON.stringify(ranked.map((s) => [s.crs, s.name, s.region, Math.round(s.score!)]))
   );
 
@@ -396,6 +549,12 @@ async function main() {
       ],
     }, null, 2)
   );
+
+  const stampSources: Record<string, Probe> = {};
+  for (const [url, head] of [[ODS_URL, odsHead], [CSV_URL, csvHead]] as const) {
+    if (head) stampSources[url] = head;
+  }
+  fs.writeFileSync(STAMP, JSON.stringify({ sources: stampSources, config: configHash() }, null, 2));
 
   const idxSize = fs.statSync(path.join(OUT, "index.json")).size;
   const stSize = fs.readdirSync(stationsDir).reduce((a, f) => a + fs.statSync(path.join(stationsDir, f)).size, 0);
