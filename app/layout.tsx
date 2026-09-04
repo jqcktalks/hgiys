@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Analytics } from "@vercel/analytics/next";
 import { Wrap } from "./ui";
 import { Heart } from 'lucide-react';
 import "./globals.css";
@@ -52,6 +53,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </Wrap>
         </footer>
+
+        <Analytics />
       </body>
     </html>
   );
